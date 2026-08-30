@@ -56,6 +56,27 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
   const [unitMph, setUnitMph] = useState(false);
   const unitMphRef = useRef(unitMph);
 
+  // Active keyboard state for fallback driving controls
+  const keysDownRef = useRef<{
+    up: boolean;
+    down: boolean;
+    left: boolean;
+    right: boolean;
+    nitro: boolean;
+    handbrake: boolean;
+    reverse: boolean;
+  }>({
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    nitro: false,
+    handbrake: false,
+    reverse: false,
+  });
+
+  const manualGearRef = useRef<'D' | 'R' | 'P' | 'S'>('D');
+
   useEffect(() => {
     controlInputRef.current = controlInput;
   }, [controlInput]);
@@ -80,6 +101,45 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
     unitMphRef.current = unitMph;
   }, [unitMph]);
 
+  // Keyboard Event Listeners for seamless dual-mode driving
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Prevent scrolling on arrow keys / space
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+        e.preventDefault();
+      }
+
+      const k = keysDownRef.current;
+      if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') k.up = true;
+      if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') k.down = true;
+      if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') k.left = true;
+      if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') k.right = true;
+      if (e.key === 'Shift') k.nitro = true;
+      if (e.key === ' ') k.handbrake = true;
+      if (e.key === 'r' || e.key === 'R') {
+        manualGearRef.current = manualGearRef.current === 'R' ? 'D' : 'R';
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      const k = keysDownRef.current;
+      if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') k.up = false;
+      if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') k.down = false;
+      if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') k.left = false;
+      if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') k.right = false;
+      if (e.key === 'Shift') k.nitro = false;
+      if (e.key === ' ') k.handbrake = false;
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
   // Physics state
   const stateRef = useRef({
     speed: 0, // km/h
@@ -93,6 +153,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
     distanceKm: 0,
     lapTime: 0,
     collisionAlert: false,
+    collisionShake: 0,
     traffic: [] as TrafficCar[],
     cones: [] as ConeObstacle[],
     particles: [] as { x: number; y: number; z: number; speed: number; alpha: number }[],
@@ -115,7 +176,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
     if (challenge.id === 'SLALOM_TEST') {
       for (let i = 0; i < 15; i++) {
         s.cones.push({
-          x: (i % 2 === 0 ? 0.45 : -0.45),
+          x: i % 2 === 0 ? 0.45 : -0.45,
           z: 300 + i * 220,
           cleared: false,
         });
@@ -183,51 +244,70 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
         return;
       }
 
-      ctx.save();
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Check Keyboard Input Overrides/Augmentations
+      const kb = keysDownRef.current;
+      const visionCtrl = controlInputRef.current;
 
-      const activeControl = controlInputRef.current;
-      const activeTheme = themeRef.current;
-      const activeChallenge = challengeRef.current;
-      const { steering, throttle, brake, gear, nitro } = activeControl;
+      let effectiveSteering = visionCtrl.steering;
+      let effectiveThrottle = visionCtrl.throttle;
+      let effectiveBrake = visionCtrl.brake;
+      let effectiveNitro = visionCtrl.nitro;
+      let activeGear = visionCtrl.gear || manualGearRef.current || 'D';
 
-      // Acceleration / Deceleration
-      let maxSpd = s.maxSpeed;
-      if (nitro) maxSpd = 280;
-      if (gear === 'R') maxSpd = 45;
-      if (gear === 'P') maxSpd = 0;
+      if (kb.left) effectiveSteering = -1.0;
+      else if (kb.right) effectiveSteering = 1.0;
 
-      const effectiveThrottle = gear === 'P' || gear === 'N' ? 0 : throttle;
-      const isReverse = gear === 'R';
-
-      // Power curves
-      if (gear === 'P') {
-        s.speed = Math.max(0, s.speed - 90 * dt);
-      } else if (brake > 0.05) {
-        // High-performance braking
-        const brakeForce = 120 * brake;
-        s.speed = Math.max(0, s.speed - brakeForce * dt);
-      } else if (effectiveThrottle > 0.05) {
-        const accelRate = (nitro ? 65 : 42) * effectiveThrottle * (1 - s.speed / maxSpd);
-        s.speed = Math.min(maxSpd, s.speed + accelRate * dt);
-      } else {
-        // Air resistance & engine drag
-        s.speed = Math.max(0, s.speed - 12 * dt);
+      if (kb.up) {
+        effectiveThrottle = 1.0;
+        effectiveBrake = 0.0;
+      } else if (kb.down || kb.handbrake) {
+        effectiveBrake = 1.0;
+        effectiveThrottle = 0.0;
       }
 
-      // Lateral Movement
-      const steerAgility = Math.min(1.0, 0.25 + (s.speed / 120) * 0.75);
-      const lateralSpeed = steering * 2.8 * steerAgility * (isReverse ? -1 : 1);
-      s.carX = Math.max(-0.95, Math.min(0.95, s.carX + lateralSpeed * dt));
+      if (kb.nitro) effectiveNitro = true;
+      if (manualGearRef.current === 'R' || visionCtrl.gear === 'R') activeGear = 'R';
+
+      // Power curves & Acceleration/Deceleration
+      let maxSpd = s.maxSpeed;
+      if (effectiveNitro) maxSpd = 280;
+      if (activeGear === 'R') maxSpd = 45;
+      if (activeGear === 'P') maxSpd = 0;
+
+      const throttleApplied = activeGear === 'P' || activeGear === 'N' ? 0 : effectiveThrottle;
+      const isReverse = activeGear === 'R';
+
+      if (activeGear === 'P') {
+        s.speed = Math.max(0, s.speed - 90 * dt);
+      } else if (effectiveBrake > 0.05) {
+        // High-performance braking
+        const brakeForce = 140 * effectiveBrake;
+        s.speed = Math.max(0, s.speed - brakeForce * dt);
+      } else if (throttleApplied > 0.05) {
+        const accelRate = (effectiveNitro ? 70 : 45) * throttleApplied * (1 - s.speed / maxSpd);
+        s.speed = Math.min(maxSpd, s.speed + Math.max(8, accelRate) * dt);
+      } else {
+        // Air resistance & engine friction
+        s.speed = Math.max(0, s.speed - 14 * dt);
+      }
+
+      // Lateral Movement & Steering
+      const steerAgility = Math.min(1.0, 0.35 + (s.speed / 100) * 0.65);
+      const lateralSpeed = effectiveSteering * 3.2 * steerAgility * (isReverse ? -1 : 1);
+      
+      // Dynamic centrifugal drift from road curvature
+      const roadPull = s.curveAngle * (s.speed / 240);
+      s.carX = Math.max(-0.95, Math.min(0.95, s.carX + (lateralSpeed - roadPull) * dt));
 
       // Off-road shoulder drag
-      if (Math.abs(s.carX) > 0.78 && s.speed > 50) {
-        s.speed = Math.max(30, s.speed - 35 * dt);
+      if (Math.abs(s.carX) > 0.82 && s.speed > 40) {
+        s.speed = Math.max(25, s.speed - 45 * dt);
       }
 
-      // World road advancement
+      // World road advancement (positive forward, negative reverse)
       const speedMs = (s.speed * 1000) / 3600;
-      s.roadPosition += speedMs * dt * 25;
+      const roadDelta = speedMs * dt * 25 * (isReverse ? -1 : 1);
+      s.roadPosition += roadDelta;
       s.distanceKm += (s.speed * dt) / 3600;
       s.lapTime += dt;
 
@@ -235,7 +315,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
       s.curveTimer += dt;
       if (s.curveTimer > 4.5) {
         s.curveTimer = 0;
-        s.targetCurve = (Math.random() - 0.5) * 1.6;
+        s.targetCurve = (Math.random() - 0.5) * 1.5;
       }
       s.curveAngle += (s.targetCurve - s.curveAngle) * dt * 1.2;
 
@@ -243,17 +323,31 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
       const gearRatios = [3.8, 2.4, 1.6, 1.1, 0.85, 0.65];
       const activeGearIdx = Math.min(5, Math.floor(s.speed / 38));
       const gearRatio = gearRatios[activeGearIdx];
-      let rpm = 900 + (s.speed * 45 * gearRatio) + effectiveThrottle * 1200;
-      if (nitro) rpm += 800;
-      if (gear === 'N' || gear === 'P') rpm = 900 + effectiveThrottle * 5500;
-      rpm = Math.min(7800, Math.max(850, rpm));
+      let rpm = 900 + (s.speed * 42 * gearRatio) + throttleApplied * 1400;
+      if (effectiveNitro) rpm += 900;
+      if (activeGear === 'N' || activeGear === 'P') rpm = 900 + throttleApplied * 5800;
+      rpm = Math.min(8000, Math.max(850, rpm));
 
       // G-Forces calculation
-      const lateralG = (steering * (s.speed / 100) * 0.95) - (s.curveAngle * (s.speed / 140));
-      const longitudinalG = (effectiveThrottle * 0.7) - (brake * 1.2);
+      const lateralG = (effectiveSteering * (s.speed / 100) * 0.95) - (s.curveAngle * (s.speed / 140));
+      const longitudinalG = (throttleApplied * 0.75) - (effectiveBrake * 1.3);
 
       // Sound update
-      vehicleAudio.updateVehicleSound(s.speed, rpm, effectiveThrottle, brake, lateralG);
+      vehicleAudio.updateVehicleSound(s.speed, rpm, throttleApplied, effectiveBrake, lateralG);
+
+      // Camera Shake decay
+      if (s.collisionShake > 0) {
+        s.collisionShake = Math.max(0, s.collisionShake - dt * 25);
+      }
+
+      // Prepare Canvas Context with DPR and Shake
+      ctx.save();
+      const shakeX = (Math.random() - 0.5) * s.collisionShake;
+      const shakeY = (Math.random() - 0.5) * s.collisionShake;
+      ctx.setTransform(dpr, 0, 0, dpr, shakeX, shakeY);
+
+      const activeTheme = themeRef.current;
+      const activeChallenge = challengeRef.current;
 
       // --- DRAW BACKGROUND & SKY ---
       const horizonY = h * 0.44;
@@ -282,7 +376,6 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
       ctx.save();
       const skyOffset = -s.curveAngle * 120;
       if (activeTheme === 'CYBER_NEON_NIGHT') {
-        // Cyberpunk neon grid skyline
         ctx.fillStyle = '#09081a';
         for (let i = -2; i < 16; i++) {
           const bx = (i * 90 + skyOffset * 0.4) % (w + 180) - 90;
@@ -295,7 +388,6 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
           ctx.fillStyle = '#09081a';
         }
       } else {
-        // Mountains
         ctx.fillStyle = activeTheme === 'SUNSET_COAST' ? '#38184c' : '#475569';
         ctx.beginPath();
         ctx.moveTo(0, horizonY);
@@ -348,7 +440,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
         const rx2 = vanishX + (w * 0.5 - vanishX) * (1 - p2) + curveOffset2 - s.carX * rw2 * 0.5;
 
         // Alternating asphalt segments
-        const isStripe = Math.floor((s.roadPosition * 0.05 + i * 0.5)) % 2 === 0;
+        const isStripe = Math.floor(s.roadPosition * 0.05 + i * 0.5) % 2 === 0;
 
         // Shoulder Curbs (Red / White rumble strips)
         const curbW1 = rw1 * 0.12;
@@ -369,9 +461,10 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
         ctx.fill();
 
         // Asphalt
-        ctx.fillStyle = activeTheme === 'CYBER_NEON_NIGHT'
-          ? (isStripe ? '#141428' : '#0f0f1f')
-          : (isStripe ? '#292524' : '#1c1917');
+        ctx.fillStyle =
+          activeTheme === 'CYBER_NEON_NIGHT'
+            ? isStripe ? '#141428' : '#0f0f1f'
+            : isStripe ? '#292524' : '#1c1917';
         ctx.beginPath();
         ctx.moveTo(rx1 - rw1 * 0.5, y1);
         ctx.lineTo(rx1 + rw1 * 0.5, y1);
@@ -409,7 +502,8 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
 
       // --- AUTONOMOUS LANE ASSIST GUIDANCE LINE ---
       ctx.save();
-      ctx.strokeStyle = activeTheme === 'CYBER_NEON_NIGHT' ? 'rgba(6, 182, 212, 0.6)' : 'rgba(34, 197, 94, 0.65)';
+      ctx.strokeStyle =
+        activeTheme === 'CYBER_NEON_NIGHT' ? 'rgba(6, 182, 212, 0.6)' : 'rgba(34, 197, 94, 0.65)';
       ctx.lineWidth = 4;
       ctx.setLineDash([12, 10]);
       ctx.beginPath();
@@ -431,7 +525,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
       // 1. Slalom Cones
       if (activeChallenge.id === 'SLALOM_TEST') {
         s.cones.forEach((cone) => {
-          cone.z -= speedMs * dt * 25;
+          cone.z -= roadDelta;
           if (cone.z < -50) cone.z += 15 * 220; // recycle
 
           if (cone.z > 0 && cone.z < 2500) {
@@ -439,7 +533,8 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
             const cy = horizonY + Math.pow(p, 2.2) * (h - horizonY);
             const crw = roadTopW + Math.pow(p, 2.2) * (roadBaseW - roadTopW);
             const curveOffset = Math.sin(p * Math.PI) * s.curveAngle * 140;
-            const cx = vanishX + (w * 0.5 - vanishX) * (1 - p) + curveOffset + (cone.x - s.carX) * crw * 0.5;
+            const cx =
+              vanishX + (w * 0.5 - vanishX) * (1 - p) + curveOffset + (cone.x - s.carX) * crw * 0.5;
 
             const coneSize = Math.max(6, p * 36);
 
@@ -452,7 +547,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
             ctx.closePath();
             ctx.fill();
 
-            // White reflective stripe on cone
+            // White reflective stripe
             ctx.fillStyle = '#ffffff';
             ctx.beginPath();
             ctx.moveTo(cx - coneSize * 0.2, cy - coneSize * 0.4);
@@ -466,6 +561,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
             if (cone.z < 80 && cone.z > 10 && Math.abs(cone.x - s.carX) < 0.22) {
               collisionDetected = true;
               s.speed = Math.max(15, s.speed - 30 * dt);
+              s.collisionShake = 8;
             } else if (cone.z <= 10 && !cone.cleared) {
               cone.cleared = true;
               s.score += 100;
@@ -483,7 +579,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
         }
 
         if (s.emergencyObstacleZ > -100) {
-          s.emergencyObstacleZ -= speedMs * dt * 25;
+          s.emergencyObstacleZ -= roadDelta;
           const p = Math.max(0.01, Math.min(1.0, 1 - s.emergencyObstacleZ / 2500));
           const ey = horizonY + Math.pow(p, 2.2) * (h - horizonY);
           const erw = roadTopW + Math.pow(p, 2.2) * (roadBaseW - roadTopW);
@@ -505,11 +601,13 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
             if (s.speed > 10) {
               collisionDetected = true;
               s.speed = 0;
+              s.collisionShake = 16;
             } else if (!s.reactionRecorded) {
               s.reactionRecorded = true;
               const reactionMs = performance.now() - s.emergencyStartTime;
               s.score = Math.max(100, Math.floor(2000 - reactionMs));
-              if (onChallengeEventRef.current) onChallengeEventRef.current('EMERGENCY_STOP_SUCCESS', reactionMs);
+              if (onChallengeEventRef.current)
+                onChallengeEventRef.current('EMERGENCY_STOP_SUCCESS', reactionMs);
             }
           }
         }
@@ -517,7 +615,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
       // 3. Ambient AI Highway Traffic
       else {
         s.traffic.forEach((car) => {
-          const relativeSpeedMs = ((car.speed - s.speed) * 1000) / 3600;
+          const relativeSpeedMs = ((car.speed - (isReverse ? -s.speed : s.speed)) * 1000) / 3600;
           car.z += relativeSpeedMs * dt * 25;
 
           // Recycle traffic car
@@ -536,7 +634,8 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
             const ty = horizonY + Math.pow(p, 2.2) * (h - horizonY);
             const trw = roadTopW + Math.pow(p, 2.2) * (roadBaseW - roadTopW);
             const curveOffset = Math.sin(p * Math.PI) * s.curveAngle * 140;
-            const tx = vanishX + (w * 0.5 - vanishX) * (1 - p) + curveOffset + (car.x - s.carX) * trw * 0.5;
+            const tx =
+              vanishX + (w * 0.5 - vanishX) * (1 - p) + curveOffset + (car.x - s.carX) * trw * 0.5;
 
             const carWidthPx = Math.max(12, p * 90);
             const carHeightPx = Math.max(8, p * 55);
@@ -567,6 +666,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
             if (car.z < 95 && car.z > 10 && Math.abs(car.x - s.carX) < 0.24) {
               collisionDetected = true;
               s.speed = Math.max(10, s.speed - 60 * dt);
+              s.collisionShake = 12;
             }
           }
         });
@@ -580,11 +680,11 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
       }
 
       // --- SPEED LINES & NITRO PARTICLES ---
-      if (s.speed > 130 || nitro) {
+      if (s.speed > 120 || effectiveNitro) {
         ctx.save();
-        ctx.strokeStyle = nitro ? 'rgba(56, 189, 248, 0.45)' : 'rgba(255, 255, 255, 0.25)';
-        ctx.lineWidth = nitro ? 3 : 1.5;
-        const particleCount = nitro ? 22 : 12;
+        ctx.strokeStyle = effectiveNitro ? 'rgba(56, 189, 248, 0.55)' : 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = effectiveNitro ? 3 : 1.5;
+        const particleCount = effectiveNitro ? 24 : 12;
         for (let i = 0; i < particleCount; i++) {
           const randAngle = Math.random() * Math.PI * 2;
           const dist = 80 + Math.random() * (w * 0.45);
@@ -637,7 +737,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
       const wheelCenterX = w * 0.5;
       const wheelCenterY = h * 0.86;
       const wheelRadius = Math.min(w * 0.16, 120);
-      const wheelAngleRad = steering * (Math.PI * 0.45); // up to ~80 deg rotation
+      const wheelAngleRad = effectiveSteering * (Math.PI * 0.45); // up to ~80 deg rotation
 
       ctx.save();
       ctx.translate(wheelCenterX, wheelCenterY);
@@ -667,7 +767,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
       ctx.fillStyle = '#475569';
       ctx.fillRect(-wheelRadius * 0.9, -wheelRadius * 0.12, wheelRadius * 1.8, wheelRadius * 0.24);
 
-      // AI Studio / Vision Emblem
+      // Center Emblem
       ctx.fillStyle = '#38bdf8';
       ctx.beginPath();
       ctx.arc(0, 0, 8, 0, Math.PI * 2);
@@ -677,13 +777,13 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
 
       // Collision Red Flash Effect
       if (s.collisionAlert) {
-        ctx.fillStyle = 'rgba(239, 68, 68, 0.28)';
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.32)';
         ctx.fillRect(0, 0, w, h);
       }
 
       ctx.restore(); // Restore base transform
 
-      // Direct DOM HUD Updates (Zero React re-render lag or flicker)
+      // Direct DOM HUD Updates
       const currentSpeedRounded = Math.round(s.speed);
       const isMph = unitMphRef.current;
       const displaySpeed = Math.round(isMph ? currentSpeedRounded * 0.621371 : currentSpeedRounded);
@@ -691,13 +791,13 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
         speedDisplayRef.current.textContent = String(displaySpeed);
       }
       if (gearDisplayRef.current) {
-        gearDisplayRef.current.textContent = gear || 'D';
+        gearDisplayRef.current.textContent = activeGear;
       }
       if (throttleBarRef.current) {
-        throttleBarRef.current.style.width = `${Math.round(throttle * 100)}%`;
+        throttleBarRef.current.style.width = `${Math.round(effectiveThrottle * 100)}%`;
       }
       if (brakeBarRef.current) {
-        brakeBarRef.current.style.width = `${Math.round(brake * 100)}%`;
+        brakeBarRef.current.style.width = `${Math.round(effectiveBrake * 100)}%`;
       }
 
       // Throttled Telemetry Dispatch (~10 Hz)
@@ -706,7 +806,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
         onTelemetryUpdateRef.current({
           speedKmh: currentSpeedRounded,
           rpm: Math.round(rpm),
-          gear: gear || 'D',
+          gear: activeGear,
           lateralG: Number(lateralG.toFixed(2)),
           longitudinalG: Number(longitudinalG.toFixed(2)),
           distanceTraveledKm: Number(s.distanceKm.toFixed(2)),
@@ -726,7 +826,7 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
       cancelAnimationFrame(animationFrameId);
       resizeObserver.disconnect();
     };
-  }, []); // Run effect once on mount for rock-solid 60 FPS animation
+  }, []);
 
   return (
     <div
@@ -757,6 +857,9 @@ export const DrivingCanvas: React.FC<DrivingCanvasProps> = ({
         </div>
 
         <div className="flex items-center gap-2 pointer-events-auto">
+          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#161b22]/90 border border-[#30363d] text-[10px] text-gray-400 font-mono">
+            <span>KEYBOARD: <kbd className="text-gray-200 bg-[#21262d] px-1 py-0.5 rounded border border-[#30363d]">W</kbd><kbd className="text-gray-200 bg-[#21262d] px-1 py-0.5 rounded border border-[#30363d]">A</kbd><kbd className="text-gray-200 bg-[#21262d] px-1 py-0.5 rounded border border-[#30363d]">S</kbd><kbd className="text-gray-200 bg-[#21262d] px-1 py-0.5 rounded border border-[#30363d]">D</kbd> / <kbd className="text-gray-200 bg-[#21262d] px-1 py-0.5 rounded border border-[#30363d]">ARROWS</kbd></span>
+          </div>
           <button
             id="mph-kmh-toggle-btn"
             onClick={() => setUnitMph(!unitMph)}

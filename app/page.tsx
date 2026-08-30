@@ -89,6 +89,7 @@ export default function GestureDriveApp() {
     showBoundingBox: true,
     showVectorMathOverlay: true,
     mirrorCamera: true,
+    throttleScheme: 'OPEN_PALM_ACCEL',
   });
 
   // Log buffer for terminal
@@ -385,34 +386,41 @@ export default function GestureDriveApp() {
       {isHelpOpen && (
         <div
           id="gesture-guide-banner"
-          className="bg-[#161b22] border-b border-[#30363d] px-4 py-2.5 text-[11px] text-gray-300 grid grid-cols-2 sm:grid-cols-4 gap-2.5 animate-in slide-in-from-top-2 duration-200"
+          className="bg-[#161b22] border-b border-[#30363d] px-4 py-2.5 text-[11px] text-gray-300 grid grid-cols-2 sm:grid-cols-5 gap-2.5 animate-in slide-in-from-top-2 duration-200"
         >
           <div className="bg-[#0d1117] p-2 rounded border border-[#30363d] flex items-center gap-2">
             <span className="text-lg">🖐️</span>
             <div>
-              <strong className="text-white block uppercase text-[10px]">Hand Tilt Left/Right</strong>
+              <strong className="text-white block uppercase text-[10px]">Tilt Left / Right</strong>
               <span className="text-[9px] text-gray-400">Wrist angle steers the vehicle</span>
             </div>
           </div>
           <div className="bg-[#0d1117] p-2 rounded border border-[#30363d] flex items-center gap-2">
-            <span className="text-lg">✋</span>
+            <span className="text-lg">🖐️</span>
             <div>
-              <strong className="text-white block uppercase text-[10px]">Open Palm</strong>
-              <span className="text-[9px] text-gray-400">Emergency heavy brake</span>
+              <strong className="text-white block uppercase text-[10px]">Open Hand</strong>
+              <span className="text-[9px] text-gray-400">Drive & accelerate throttle</span>
             </div>
           </div>
           <div className="bg-[#0d1117] p-2 rounded border border-[#30363d] flex items-center gap-2">
             <span className="text-lg">✊</span>
             <div>
-              <strong className="text-white block uppercase text-[10px]">Closed Fist</strong>
-              <span className="text-[9px] text-gray-400">Full throttle / Go acceleration</span>
+              <strong className="text-white block uppercase text-[10px]">Closed Fist / Pinch</strong>
+              <span className="text-[9px] text-gray-400">Apply brakes to decelerate & stop</span>
             </div>
           </div>
           <div className="bg-[#0d1117] p-2 rounded border border-[#30363d] flex items-center gap-2">
             <span className="text-lg">👍</span>
             <div>
               <strong className="text-white block uppercase text-[10px]">Thumbs Up</strong>
-              <span className="text-[9px] text-gray-400">Nitro boost engagement</span>
+              <span className="text-[9px] text-gray-400">Nitro boost (280 km/h)</span>
+            </div>
+          </div>
+          <div className="bg-[#0d1117] p-2 rounded border border-[#30363d] flex items-center gap-2">
+            <span className="text-lg">⌨️</span>
+            <div>
+              <strong className="text-white block uppercase text-[10px]">W/A/S/D / Arrows</strong>
+              <span className="text-[9px] text-gray-400">Keyboard driving support</span>
             </div>
           </div>
         </div>
@@ -432,7 +440,7 @@ export default function GestureDriveApp() {
             </h2>
             <div className="space-y-1.5 text-[11px]">
               <div className="flex justify-between items-center">
-                <span className="text-gray-300">THROTTLE_FIST</span>
+                <span className="text-gray-300">THROTTLE_DRIVE</span>
                 <span
                   className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
                     controlInput.throttle > 0.3
@@ -456,7 +464,7 @@ export default function GestureDriveApp() {
                 </span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-300">BRAKE_PALM</span>
+                <span className="text-gray-300">BRAKE_STATE</span>
                 <span
                   className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
                     controlInput.brake > 0.2

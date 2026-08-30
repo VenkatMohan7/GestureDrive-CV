@@ -52,6 +52,7 @@ export interface VisionCalibrationSettings {
   showBoundingBox: boolean;
   showVectorMathOverlay: boolean;
   mirrorCamera: boolean;
+  throttleScheme: 'OPEN_PALM_ACCEL' | 'FIST_ACCEL';
 }
 
 export interface TelemetryData {

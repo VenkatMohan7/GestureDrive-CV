@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { VisionCalibrationSettings, ControlMode } from '@/types/vision';
-import { X, Sliders, RotateCcw, Check } from 'lucide-react';
+import { X, Sliders, RotateCcw, Check, Sparkles } from 'lucide-react';
 
 interface CalibrationModalProps {
   isOpen: boolean;
@@ -25,7 +25,7 @@ export const CalibrationModal: React.FC<CalibrationModalProps> = ({
 
   const handleResetDefaults = () => {
     onUpdateSettings({
-      steeringSensitivity: 1.2,
+      steeringSensitivity: 1.25,
       deadzoneAngle: 5.0,
       maxSteerAngle: 45.0,
       smoothingFactor: 0.65,
@@ -36,6 +36,7 @@ export const CalibrationModal: React.FC<CalibrationModalProps> = ({
       showBoundingBox: true,
       showVectorMathOverlay: true,
       mirrorCamera: true,
+      throttleScheme: 'OPEN_PALM_ACCEL',
     });
   };
 
@@ -89,7 +90,7 @@ export const CalibrationModal: React.FC<CalibrationModalProps> = ({
               >
                 <div className="font-bold text-xs mb-0.5 uppercase">Single-Hand Tilt</div>
                 <div className="text-[10px] text-gray-400 leading-snug">
-                  Wrist-to-middle MCP angle controls steering; hand closed (fist) for throttle/go, hand open for brake.
+                  Wrist-to-middle MCP angle steers vehicle; open hand accelerates & drives, closed fist brakes.
                 </div>
               </button>
 
@@ -110,11 +111,60 @@ export const CalibrationModal: React.FC<CalibrationModalProps> = ({
             </div>
           </div>
 
+          {/* Throttle / Brake Scheme Selector */}
+          <div>
+            <label className="block text-gray-400 text-[10px] uppercase font-bold mb-1.5 flex items-center gap-1.5">
+              <Sparkles className="w-3 h-3 text-amber-400" />
+              <span>Throttle & Brake Control Scheme</span>
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                id="scheme-open-palm-btn"
+                onClick={() =>
+                  onUpdateSettings({ ...settings, throttleScheme: 'OPEN_PALM_ACCEL' })
+                }
+                className={`p-2.5 rounded border text-left transition ${
+                  (settings.throttleScheme || 'OPEN_PALM_ACCEL') === 'OPEN_PALM_ACCEL'
+                    ? 'bg-green-950/80 border-green-500 text-green-200'
+                    : 'bg-[#0d1117] border-[#30363d] hover:border-gray-600 text-gray-300'
+                }`}
+              >
+                <div className="font-bold text-xs mb-0.5 uppercase text-green-400">
+                  Open Palm = Drive (Recommended)
+                </div>
+                <div className="text-[10px] text-gray-400 leading-snug">
+                  🖐️ Open Hand accelerates & cruises; ✊ Fist brakes & stops.
+                </div>
+              </button>
+
+              <button
+                id="scheme-fist-btn"
+                onClick={() =>
+                  onUpdateSettings({ ...settings, throttleScheme: 'FIST_ACCEL' })
+                }
+                className={`p-2.5 rounded border text-left transition ${
+                  settings.throttleScheme === 'FIST_ACCEL'
+                    ? 'bg-blue-950/80 border-blue-500 text-blue-200'
+                    : 'bg-[#0d1117] border-[#30363d] hover:border-gray-600 text-gray-300'
+                }`}
+              >
+                <div className="font-bold text-xs mb-0.5 uppercase text-blue-400">
+                  Fist = Drive (Classic)
+                </div>
+                <div className="text-[10px] text-gray-400 leading-snug">
+                  ✊ Closed Fist accelerates; ✋ Open Palm brakes hard.
+                </div>
+              </button>
+            </div>
+          </div>
+
           {/* Slider 1: Steering Sensitivity */}
           <div className="bg-[#0d1117] p-3 rounded border border-[#30363d]">
             <div className="flex justify-between items-center mb-1">
               <span className="font-bold text-[10px] uppercase text-gray-300">Steering Sensitivity</span>
-              <span className="font-mono text-blue-400 font-bold text-xs">{settings.steeringSensitivity.toFixed(2)}x</span>
+              <span className="font-mono text-blue-400 font-bold text-xs">
+                {settings.steeringSensitivity.toFixed(2)}x
+              </span>
             </div>
             <input
               id="slider-steering-sensitivity"
@@ -137,7 +187,9 @@ export const CalibrationModal: React.FC<CalibrationModalProps> = ({
           <div className="bg-[#0d1117] p-3 rounded border border-[#30363d]">
             <div className="flex justify-between items-center mb-1">
               <span className="font-bold text-[10px] uppercase text-gray-300">Deadzone Angle</span>
-              <span className="font-mono text-blue-400 font-bold text-xs">{settings.deadzoneAngle.toFixed(1)}°</span>
+              <span className="font-mono text-blue-400 font-bold text-xs">
+                {settings.deadzoneAngle.toFixed(1)}°
+              </span>
             </div>
             <input
               id="slider-deadzone-angle"
@@ -160,7 +212,9 @@ export const CalibrationModal: React.FC<CalibrationModalProps> = ({
           <div className="bg-[#0d1117] p-3 rounded border border-[#30363d]">
             <div className="flex justify-between items-center mb-1">
               <span className="font-bold text-[10px] uppercase text-gray-300">EMA Filter Smoothing</span>
-              <span className="font-mono text-blue-400 font-bold text-xs">{settings.smoothingFactor.toFixed(2)}</span>
+              <span className="font-mono text-blue-400 font-bold text-xs">
+                {settings.smoothingFactor.toFixed(2)}
+              </span>
             </div>
             <input
               id="slider-smoothing-factor"

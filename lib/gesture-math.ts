@@ -3,10 +3,9 @@ import {
   VehicleControlInput,
   VisionCalibrationSettings,
   ControlMode,
-  GestureType,
 } from '@/types/vision';
 
-// MediaPipe 21 Hand Landmark Indices
+// MediaPipe 21 Hand Landmark Connections for Skeleton Rendering
 export const HAND_CONNECTIONS = [
   // Thumb
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -43,16 +42,20 @@ export function vectorAngleDeg(
   return (Math.atan2(dy, dx) * 180) / Math.PI;
 }
 
-// Check if a finger is extended by comparing tip distance from wrist vs PIP joint distance
+// Check if a finger is extended by comparing tip distance from wrist vs PIP/MCP joint distance
 export function isFingerExtended(
   landmarks: NormalizedLandmark[],
   tipIdx: number,
-  pipIdx: number
+  pipIdx: number,
+  mcpIdx: number
 ): boolean {
   const wrist = landmarks[0];
   const tipDist = euclideanDistance(wrist, landmarks[tipIdx]);
   const pipDist = euclideanDistance(wrist, landmarks[pipIdx]);
-  return tipDist > pipDist * 1.15;
+  const mcpDist = euclideanDistance(wrist, landmarks[mcpIdx]);
+  
+  // Finger is extended if tip is further from wrist than PIP and MCP
+  return tipDist > pipDist * 1.08 && tipDist > mcpDist * 1.25;
 }
 
 export interface HandGestureAnalysis {
@@ -68,7 +71,8 @@ export interface HandGestureAnalysis {
 }
 
 export function analyzeSingleHand(
-  landmarks: NormalizedLandmark[]
+  landmarks: NormalizedLandmark[],
+  mirror: boolean = true
 ): HandGestureAnalysis {
   if (!landmarks || landmarks.length < 21) {
     return {
@@ -87,29 +91,24 @@ export function analyzeSingleHand(
   const wrist = landmarks[0];
   const thumbTip = landmarks[4];
   const thumbIp = landmarks[3];
+  const thumbMcp = landmarks[2];
   const indexTip = landmarks[8];
-  const indexPip = landmarks[6];
-  const middleTip = landmarks[12];
-  const middlePip = landmarks[10];
-  const ringTip = landmarks[16];
-  const ringPip = landmarks[14];
-  const pinkyTip = landmarks[20];
-  const pinkyPip = landmarks[18];
   const middleMcp = landmarks[9];
 
-  // Finger extensions
-  const thumbExtended = euclideanDistance(wrist, thumbTip) > euclideanDistance(wrist, thumbIp) * 1.1;
-  const indexExtended = isFingerExtended(landmarks, 8, 6);
-  const middleExtended = isFingerExtended(landmarks, 12, 10);
-  const ringExtended = isFingerExtended(landmarks, 16, 14);
-  const pinkyExtended = isFingerExtended(landmarks, 20, 18);
+  // Finger extension classifications
+  const thumbDist = euclideanDistance(wrist, thumbTip);
+  const thumbExtended = thumbDist > euclideanDistance(wrist, thumbIp) * 1.1 && thumbDist > euclideanDistance(wrist, thumbMcp) * 1.2;
+  const indexExtended = isFingerExtended(landmarks, 8, 6, 5);
+  const middleExtended = isFingerExtended(landmarks, 12, 10, 9);
+  const ringExtended = isFingerExtended(landmarks, 16, 14, 13);
+  const pinkyExtended = isFingerExtended(landmarks, 20, 18, 17);
 
   const fingerStates = [thumbExtended, indexExtended, middleExtended, ringExtended, pinkyExtended];
   const extendedCount = fingerStates.filter(Boolean).length;
 
   // Pinch: distance between thumb tip and index tip is small
   const pinchDist = euclideanDistance(thumbTip, indexTip);
-  const isPinch = pinchDist < 0.08;
+  const isPinch = pinchDist < 0.075 && !thumbExtended;
 
   // Fist: 0 or 1 finger extended (tightly closed)
   const isFist = extendedCount <= 1 && !isPinch;
@@ -124,10 +123,13 @@ export function analyzeSingleHand(
   const isPeaceSign = indexExtended && middleExtended && !ringExtended && !pinkyExtended;
 
   // Calculate tilt angle of the hand based on vector from Wrist (0) to Middle MCP (9)
-  // In screen coordinates: y points down. Hand pointing straight UP has dy < 0, dx ~ 0.
-  // Standard zero is pointing straight up (-90 deg from horizontal).
-  const dx = middleMcp.x - wrist.x;
+  // In camera coordinates: y points down.
+  // In mirrored camera: if hand tilts to the user's RIGHT, middleMcp is to the right of wrist in mirrored space.
+  const rawDx = middleMcp.x - wrist.x;
+  const dx = mirror ? -rawDx : rawDx; // flip dx if camera feed is mirrored
   const dy = middleMcp.y - wrist.y;
+
+  // Math.atan2(dy, dx): for pointing straight UP, dy < 0, dx = 0 -> angle is -90 deg.
   let angle = (Math.atan2(dy, dx) * 180) / Math.PI; // -180 to 180
   // Normalize so straight UP is 0 deg, tilt Right is +deg, tilt Left is -deg
   let tiltAngleDeg = angle + 90;
@@ -174,9 +176,9 @@ export function computeVehicleControl(
     // Graceful decay when hand disappears
     return {
       ...previousInput,
-      steering: previousInput.steering * 0.7,
+      steering: previousInput.steering * 0.75,
       throttle: previousInput.throttle * 0.5,
-      brake: 0.2, // idle drag
+      brake: previousInput.brake > 0.1 ? previousInput.brake : 0.15, // smooth coasting drag
       activeGesture: 'NONE',
       confidence: 0,
       latencyMs: latencyMs || 28,
@@ -184,25 +186,33 @@ export function computeVehicleControl(
     };
   }
 
+  const isMirror = settings.mirrorCamera ?? true;
+  const throttleScheme = settings.throttleScheme || 'OPEN_PALM_ACCEL';
+
   // --- DUAL HAND VIRTUAL STEERING WHEEL MODE ---
   if (mode === 'DUAL_HAND_WHEEL' && allLandmarks.length >= 2) {
-    // Sort hands by X-coordinate so left hand is index 0 and right hand is index 1
-    const sorted = [...allLandmarks].sort((a, b) => a[0].x - b[0].x);
+    // Determine screen X coordinates for left vs right hand
+    const getScreenX = (hand: NormalizedLandmark[]) => isMirror ? 1 - hand[0].x : hand[0].x;
+    const sorted = [...allLandmarks].sort((a, b) => getScreenX(a) - getScreenX(b));
     const leftHand = sorted[0];
     const rightHand = sorted[1];
 
     const leftWrist = leftHand[0];
     const rightWrist = rightHand[0];
 
-    // Compute angle between the two hands (like holding a physical steering wheel)
-    const dx = rightWrist.x - leftWrist.x;
-    const dy = rightWrist.y - leftWrist.y;
-    // In camera image: right hand higher than left hand means tilting right
+    const lx = isMirror ? (1 - leftWrist.x) : leftWrist.x;
+    const rx = isMirror ? (1 - rightWrist.x) : rightWrist.x;
+    const ly = leftWrist.y;
+    const ry = rightWrist.y;
+
+    // Compute angle between the two hands in screen space
+    const dx = rx - lx;
+    const dy = ry - ly; // in screen coords: y points down, so if right hand is lower, dy > 0 (turning right / clockwise)
     const wheelAngleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
 
     result.handAngleDeg = wheelAngleDeg;
 
-    // Apply Deadzone
+    // Apply Deadzone & Sensitivity
     let steerValue = 0;
     if (Math.abs(wheelAngleDeg) > settings.deadzoneAngle) {
       const sign = Math.sign(wheelAngleDeg);
@@ -213,30 +223,51 @@ export function computeVehicleControl(
     if (settings.invertSteering) {
       steerValue = -steerValue;
     }
-
     result.steering = steerValue;
 
-    // Check individual hands for throttle / brake (Open Palm = Brake, Closed Fist = Go/Throttle)
-    const leftAnalysis = analyzeSingleHand(leftHand);
-    const rightAnalysis = analyzeSingleHand(rightHand);
-
-    if (leftAnalysis.isOpenPalm || rightAnalysis.isOpenPalm) {
-      result.brake = 1.0;
-      result.throttle = 0.0;
-      result.activeGesture = 'BRAKE_HARD';
-    } else if (leftAnalysis.isFist || rightAnalysis.isFist) {
-      result.throttle = 0.85;
-      result.brake = 0.0;
-      result.activeGesture = result.steering > 0.15 ? 'STEER_RIGHT' : result.steering < -0.15 ? 'STEER_LEFT' : 'THROTTLE_ACCEL';
-    } else {
-      result.throttle = 0.35; // Cruising
-      result.activeGesture = 'CRUISE';
-    }
+    // Analyze individual hands
+    const leftAnalysis = analyzeSingleHand(leftHand, isMirror);
+    const rightAnalysis = analyzeSingleHand(rightHand, isMirror);
 
     if (leftAnalysis.isThumbsUp || rightAnalysis.isThumbsUp) {
       result.nitro = true;
       result.throttle = 1.0;
+      result.gear = 'S';
       result.activeGesture = 'NITRO_BOOST';
+    } else if (leftAnalysis.isPeaceSign || rightAnalysis.isPeaceSign) {
+      result.gear = previousInput.gear === 'R' ? 'D' : 'R';
+      result.throttle = 0.5;
+      result.activeGesture = result.gear === 'R' ? 'GEAR_REVERSE' : 'GEAR_DRIVE';
+    } else if (throttleScheme === 'OPEN_PALM_ACCEL') {
+      // Natural scheme: Open hands = Drive/Throttle, Fists = Brake
+      if (leftAnalysis.isFist && rightAnalysis.isFist) {
+        result.brake = 1.0;
+        result.throttle = 0.0;
+        result.activeGesture = 'BRAKE_HARD';
+      } else if (leftAnalysis.isFist || rightAnalysis.isFist || leftAnalysis.isPinch || rightAnalysis.isPinch) {
+        result.brake = 0.5;
+        result.throttle = 0.1;
+        result.activeGesture = 'BRAKE_LIGHT';
+      } else {
+        // Hands open on wheel = Accelerate & Steer
+        result.throttle = 0.85;
+        result.brake = 0.0;
+        result.activeGesture = Math.abs(steerValue) > 0.2 ? (steerValue > 0 ? 'STEER_RIGHT' : 'STEER_LEFT') : 'THROTTLE_ACCEL';
+      }
+    } else {
+      // Classic scheme: Fist = Go, Open Palm = Brake
+      if (leftAnalysis.isOpenPalm || rightAnalysis.isOpenPalm) {
+        result.brake = 1.0;
+        result.throttle = 0.0;
+        result.activeGesture = 'BRAKE_HARD';
+      } else if (leftAnalysis.isFist || rightAnalysis.isFist) {
+        result.throttle = 0.85;
+        result.brake = 0.0;
+        result.activeGesture = Math.abs(steerValue) > 0.2 ? (steerValue > 0 ? 'STEER_RIGHT' : 'STEER_LEFT') : 'THROTTLE_ACCEL';
+      } else {
+        result.throttle = 0.45;
+        result.activeGesture = 'CRUISE';
+      }
     }
 
     result.confidence = (leftAnalysis.confidence + rightAnalysis.confidence) / 2;
@@ -244,7 +275,7 @@ export function computeVehicleControl(
   // --- SINGLE HAND GESTURE MODE ---
   else {
     const hand = allLandmarks[0];
-    const analysis = analyzeSingleHand(hand);
+    const analysis = analyzeSingleHand(hand, isMirror);
     result.handAngleDeg = analysis.tiltAngleDeg;
     result.confidence = analysis.confidence;
 
@@ -261,49 +292,78 @@ export function computeVehicleControl(
     }
     result.steering = steerValue;
 
-    // Gesture classifications (Open Palm = Full Brake, Closed Fist = Full Throttle / Go)
-    if (analysis.isOpenPalm) {
-      result.brake = 1.0;
-      result.throttle = 0.0;
-      result.activeGesture = 'BRAKE_HARD';
-    } else if (analysis.isFist) {
-      result.throttle = 0.9;
-      result.brake = 0.0;
-      if (Math.abs(steerValue) > 0.25) {
-        result.activeGesture = steerValue > 0 ? 'STEER_RIGHT' : 'STEER_LEFT';
-      } else {
-        result.activeGesture = 'THROTTLE_ACCEL';
-      }
-    } else if (analysis.isPinch) {
-      result.brake = 0.4;
-      result.throttle = 0.1;
-      result.activeGesture = 'BRAKE_LIGHT';
-    } else if (analysis.isThumbsUp) {
+    // Special Gestures
+    if (analysis.isThumbsUp) {
       result.nitro = true;
       result.throttle = 1.0;
       result.gear = 'S';
       result.activeGesture = 'NITRO_BOOST';
     } else if (analysis.isPeaceSign) {
-      result.gear = previousInput.gear === 'D' ? 'R' : 'D';
-      result.throttle = 0.4;
-      result.activeGesture = result.gear === 'R' ? 'GEAR_REVERSE' : 'GEAR_DRIVE';
-    } else {
-      // Relaxed hand / cruising
+      result.gear = previousInput.gear === 'R' ? 'D' : 'R';
       result.throttle = 0.45;
-      result.brake = 0.0;
-      if (Math.abs(steerValue) > 0.25) {
-        result.activeGesture = steerValue > 0 ? 'STEER_RIGHT' : 'STEER_LEFT';
+      result.activeGesture = result.gear === 'R' ? 'GEAR_REVERSE' : 'GEAR_DRIVE';
+    } else if (analysis.isPinch) {
+      result.brake = 0.5;
+      result.throttle = 0.0;
+      result.activeGesture = 'BRAKE_LIGHT';
+    } else if (throttleScheme === 'OPEN_PALM_ACCEL') {
+      // Natural & Intuitive Driving Scheme:
+      // Open hand (4-5 fingers) -> Full Accelerate / Drive
+      // Relaxed hand (2-3 fingers) -> Cruising
+      // Fist (0-1 fingers) -> Brake / Stop
+      if (analysis.isFist) {
+        result.brake = 1.0;
+        result.throttle = 0.0;
+        result.activeGesture = 'BRAKE_HARD';
+      } else if (analysis.isOpenPalm) {
+        result.throttle = 0.95;
+        result.brake = 0.0;
+        if (Math.abs(steerValue) > 0.2) {
+          result.activeGesture = steerValue > 0 ? 'STEER_RIGHT' : 'STEER_LEFT';
+        } else {
+          result.activeGesture = 'THROTTLE_ACCEL';
+        }
       } else {
-        result.activeGesture = 'CRUISE';
+        // Cruising / Moderate throttle
+        result.throttle = 0.55;
+        result.brake = 0.0;
+        if (Math.abs(steerValue) > 0.2) {
+          result.activeGesture = steerValue > 0 ? 'STEER_RIGHT' : 'STEER_LEFT';
+        } else {
+          result.activeGesture = 'CRUISE';
+        }
+      }
+    } else {
+      // Reverse / Classic Scheme (Fist = Throttle, Open Palm = Brake):
+      if (analysis.isOpenPalm) {
+        result.brake = 1.0;
+        result.throttle = 0.0;
+        result.activeGesture = 'BRAKE_HARD';
+      } else if (analysis.isFist) {
+        result.throttle = 0.95;
+        result.brake = 0.0;
+        if (Math.abs(steerValue) > 0.2) {
+          result.activeGesture = steerValue > 0 ? 'STEER_RIGHT' : 'STEER_LEFT';
+        } else {
+          result.activeGesture = 'THROTTLE_ACCEL';
+        }
+      } else {
+        result.throttle = 0.5;
+        result.brake = 0.0;
+        if (Math.abs(steerValue) > 0.2) {
+          result.activeGesture = steerValue > 0 ? 'STEER_RIGHT' : 'STEER_LEFT';
+        } else {
+          result.activeGesture = 'CRUISE';
+        }
       }
     }
   }
 
-  // Apply Exponential Moving Average smoothing filter
-  const alpha = 1 - settings.smoothingFactor;
-  result.steering = previousInput.steering * (1 - alpha) + result.steering * alpha;
-  result.throttle = previousInput.throttle * (1 - alpha) + result.throttle * alpha;
-  result.brake = previousInput.brake * (1 - alpha) + result.brake * alpha;
+  // Apply Exponential Moving Average (EMA) smoothing filter
+  const alpha = Math.max(0.1, Math.min(0.9, 1 - (settings.smoothingFactor ?? 0.65)));
+  result.steering = Number((previousInput.steering * (1 - alpha) + result.steering * alpha).toFixed(3));
+  result.throttle = Number((previousInput.throttle * (1 - alpha) + result.throttle * alpha).toFixed(3));
+  result.brake = Number((previousInput.brake * (1 - alpha) + result.brake * alpha).toFixed(3));
 
   return result;
 }
