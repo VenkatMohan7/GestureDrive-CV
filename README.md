@@ -25,8 +25,6 @@
 
 Check out **GestureDrive CV** in action with real-time hand landmark tracking, zero-latency steering angle calculations, dynamic throttle/brake response, and pseudo-3D obstacle avoidance:
 
-
-
 https://github.com/user-attachments/assets/0a4a30ca-7bdb-45c0-b3e0-09e33de2bc0c
 
 
