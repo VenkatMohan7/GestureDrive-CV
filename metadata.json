@@ -1,0 +1,7 @@
+{
+  "name": "GestureDrive CV",
+  "description": "Real-time contactless computer vision vehicle control with MediaPipe hand landmark tracking and autonomous driving physics simulation.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
