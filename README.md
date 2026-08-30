@@ -286,6 +286,13 @@ Distributed under the **MIT License**. See `LICENSE` for more details.
 
 ---
 
+## 👥 Team & Authors
+
+- **Venkat Mohan Atmakuru** — [@VenkatMohan7](https://github.com/VenkatMohan7)
+- **Sabarish Mettu** — [@sabarishmettu](https://github.com/sabarishmettu)
+
+---
+
 <div align="center">
-  <strong>Developed with ❤️ by <a href="https://github.com/VenkatMohan7">Venkat Mohan Atmakuru</a></strong>
+  <strong>Developed with ❤️ by <a href="https://github.com/VenkatMohan7">Venkat Mohan Atmakuru</a> & <a href="https://github.com/sabarishmettu">Sabarish Mettu</a></strong>
 </div>

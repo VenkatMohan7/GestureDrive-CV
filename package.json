@@ -4,6 +4,10 @@
   "description": "Real-time contactless computer vision vehicle control with MediaPipe hand landmark tracking and autonomous driving physics simulation.",
   "license": "MIT",
   "author": "Venkat Mohan Atmakuru <venkeyvenkat747@gmail.com> (https://github.com/VenkatMohan7)",
+  "contributors": [
+    "Venkat Mohan Atmakuru (https://github.com/VenkatMohan7)",
+    "Sabarish Mettu (https://github.com/sabarishmettu)"
+  ],
   "private": true,
   "scripts": {
     "dev": "next dev",
