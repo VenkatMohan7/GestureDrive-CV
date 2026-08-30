@@ -2,6 +2,8 @@
   "name": "gesturedrive-cv",
   "version": "1.0.0",
   "description": "Real-time contactless computer vision vehicle control with MediaPipe hand landmark tracking and autonomous driving physics simulation.",
+  "license": "MIT",
+  "author": "Venkat Mohan Atmakuru <venkeyvenkat747@gmail.com> (https://github.com/VenkatMohan7)",
   "private": true,
   "scripts": {
     "dev": "next dev",
